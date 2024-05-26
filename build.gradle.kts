@@ -16,7 +16,7 @@ repositories {
 
 configurations {
     create("includeInJar") {
-        this.isTransitive = false
+        isTransitive = false
     }
 }
 
@@ -50,6 +50,7 @@ val copyJar by tasks.register<Copy>("copyJar") {
 }
 
 tasks.named<Jar>("jar") {
+    archiveBaseName.set("BeerShopper")
     from({
         configurations["includeInJar"].map { zipTree(it) }
     })
