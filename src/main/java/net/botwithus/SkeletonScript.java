@@ -23,16 +23,17 @@ import java.awt.event.KeyEvent;
 import java.util.Random;
 
 public class SkeletonScript extends LoopingScript {
-	
+
     private BotState botState = BotState.NOT_LOGGED_IN;
     private boolean someBool = true;
-    
+    private int beersBought = 0;
+    private boolean navigating = false;
+
     enum BotState {
         NOT_LOGGED_IN,
         BACKPACK_FULL,
         BARTENDER_NEARBY,
         NAVIGATE_TO_SHOP,
-        NAVIGATE_TO_SECOND_LOCATION,
         INTERACT_WITH_BARTENDER,
         NAVIGATE_TO_BANK,
         HANDLE_DIALOG,
@@ -50,177 +51,214 @@ public class SkeletonScript extends LoopingScript {
 
     private Random random = new Random();
     private Coordinate shopCoordinate = new Coordinate(3215, 3395, 0);
-    private Coordinate secondLocation = new Coordinate(3226, 3397, 0);
     private Coordinate bankLocation = new Coordinate(3186, 3433, 0);
     private DialogState dialogState = DialogState.START;
 
     private long stateStartTime;
     private static final long TIMEOUT_DURATION = 15000;  // 15 seconds
+    private SkeletonScriptGraphicsContext sgc;
 
     public SkeletonScript(String s, ScriptConfig scriptConfig, ScriptDefinition scriptDefinition) {
         super(s, scriptConfig, scriptDefinition);
         this.sgc = new SkeletonScriptGraphicsContext(getConsole(), this);
-
     }
 
     @Override
     public void onLoop() {
         LocalPlayer player = Client.getLocalPlayer();
-        BotState state = determineState(player);
 
         if (System.currentTimeMillis() - stateStartTime > TIMEOUT_DURATION) {
-            println("Timeout reached for state: " + state + ". Resetting state.");
-            if (Backpack.isFull()) {
-                state = botState.NAVIGATE_TO_BANK;
-            } else {
-                state = botState.NAVIGATE_TO_SHOP;
-            }
-            stateStartTime = System.currentTimeMillis();
+            handleTimeout();
         }
 
-        switch (state) {
+        switch (botState) {
             case NOT_LOGGED_IN:
-                Execution.delay(random.nextLong(3000, 7000));
+                handleNotLoggedIn();
                 break;
             case BACKPACK_FULL:
-                navigateToBank();
+                interactWithBankBooth();
                 break;
             case BARTENDER_NEARBY:
-                Npc bartender = NpcQuery.newQuery().name("Bartender").results().nearest();
-                if (bartender != null) {
-                    interactWithBartender(bartender);
+                if (!Backpack.isFull()) {
+                    interactWithNearestBartender();
+                } else {
+                    botState = BotState.NAVIGATE_TO_BANK;
                 }
                 break;
             case NAVIGATE_TO_SHOP:
-                navigateToShop();
+                if (shopCoordinate.distanceTo(player.getCoordinate()) < 10) {
+                    println("Reached the shop.");
+                    botState = BotState.INTERACT_WITH_BARTENDER;
+                    navigating = false;
+                    stateStartTime = System.currentTimeMillis();
+                } else {
+                    navigateTo(shopCoordinate, BotState.NAVIGATE_TO_SHOP);
+                }
                 break;
-            case NAVIGATE_TO_SECOND_LOCATION:
-                navigateToSecondLocation();
+            case INTERACT_WITH_BARTENDER:
+                if (!Backpack.isFull()) {
+                    interactWithNearestBartender();
+                } else {
+                    botState = BotState.NAVIGATE_TO_BANK;
+                }
+                break;
+            case NAVIGATE_TO_BANK:
+                navigateTo(bankLocation, BotState.BACKPACK_FULL);
+                break;
+            case HANDLE_DIALOG:
+                handleBartenderDialog();
+                break;
+            case CHECK_DOORS:
+                checkAndHandleDoors();
                 break;
             default:
                 break;
         }
+
+        // Check if navigating and update state if destination reached
+        if (navigating) {
+            if ((botState == BotState.NAVIGATE_TO_SHOP && shopCoordinate.distanceTo(player.getCoordinate()) < 10) ||
+                (botState == BotState.NAVIGATE_TO_BANK && bankLocation.distanceTo(player.getCoordinate()) < 10)) {
+                println("Reached the destination.");
+                navigating = false;
+                stateStartTime = System.currentTimeMillis();
+                if (botState == BotState.NAVIGATE_TO_SHOP) {
+                    botState = BotState.INTERACT_WITH_BARTENDER;
+                } else if (botState == BotState.NAVIGATE_TO_BANK) {
+                    botState = BotState.BACKPACK_FULL;
+                }
+            }
+        }
     }
+
 
     private BotState determineState(LocalPlayer player) {
         Client.GameState gameState = Client.getGameState();
-        println("Game state: " + gameState);
-        println("Local player: " + player);
-        
         if (player == null || gameState != Client.GameState.LOGGED_IN) {
             return BotState.NOT_LOGGED_IN;
         } else if (Backpack.isFull()) {
-            return botState.BACKPACK_FULL;
+            return BotState.BACKPACK_FULL;
+        } else if (Dialog.isOpen()) {
+            return BotState.HANDLE_DIALOG;
         } else {
             Npc bartender = NpcQuery.newQuery().name("Bartender").results().nearest();
-            if (bartender != null && bartender.getCoordinate().distanceTo(player.getCoordinate()) < 5) {
-                return botState.BARTENDER_NEARBY;
-            } else if (shopCoordinate.distanceTo(player.getCoordinate()) >= 3) {
-                return botState.NAVIGATE_TO_SHOP;
+            if (bartender != null && bartender.getCoordinate().distanceTo(player.getCoordinate()) < 10) {
+                return BotState.BARTENDER_NEARBY;
+            } else if (shopCoordinate.distanceTo(player.getCoordinate()) >= 8) {
+                return BotState.NAVIGATE_TO_SHOP;
             } else {
-                return botState.NAVIGATE_TO_SECOND_LOCATION;
+                return BotState.INTERACT_WITH_BARTENDER;
             }
         }
     }
 
+    private void handleTimeout() {
+        println("Timeout reached for state: " + botState + ". Resetting state.");
+        botState = Backpack.isFull() ? BotState.NAVIGATE_TO_BANK : BotState.NAVIGATE_TO_SHOP;
+        stateStartTime = System.currentTimeMillis();
+    }
+
+    private void handleNotLoggedIn() {
+        Execution.delay(random.nextLong(3000, 7000));
+    }
+
+    private void navigateTo(Coordinate destination, BotState nextState) {
+        if (!navigating) {
+            int randomX = random.nextInt(11) - 5;
+            int randomY = random.nextInt(11) - 5;
+
+            Coordinate randomizedDestination = new Coordinate(
+                destination.getX() + randomX, 
+                destination.getY() + randomY, 
+                destination.getZ()
+            );
+
+            println("Navigating to: " + randomizedDestination);
+            Movement.walkTo(randomizedDestination.getX(), randomizedDestination.getY(), false);
+            stateStartTime = System.currentTimeMillis();
+            navigating = true;
+            Execution.delay(random.nextLong(10000, 12000));
+            botState = nextState;
+        } else {
+            LocalPlayer player = Client.getLocalPlayer();
+            if (destination.distanceTo(player.getCoordinate()) < 10) {
+                println("Reached destination: " + destination);
+                navigating = false;
+                stateStartTime = System.currentTimeMillis();
+                botState = nextState;
+            } else if (System.currentTimeMillis() - stateStartTime > TIMEOUT_DURATION) {
+                println("Timeout reached while navigating. Resetting navigation.");
+                navigating = false;
+                stateStartTime = System.currentTimeMillis();
+            }
+        }
+    }
 
     private void navigateToBank() {
-        println("Inventory is full. Moving to the bank.");
-        Movement.walkTo(bankLocation.getX(), bankLocation.getY(), false);
-        stateStartTime = System.currentTimeMillis();  // Reset the state start time
-        long timeout = TIMEOUT_DURATION;
+        navigateTo(bankLocation, BotState.NAVIGATE_TO_BANK);
         LocalPlayer player = Client.getLocalPlayer();
-        while (System.currentTimeMillis() - stateStartTime < timeout) {
-            if (bankLocation.distanceTo(player.getCoordinate()) < 10) {
-                println("Reached the bank location.");
-                Bank.loadLastPreset();
-                Execution.delay(random.nextLong(1500, 3000));
-                stateStartTime = System.currentTimeMillis();  // Reset the state start time
-                return;
+        
+        if (bankLocation.distanceTo(player.getCoordinate()) < 10) {
+            println("Reached the bank. Loading last preset.");
+            Bank.loadLastPreset();
+            Execution.delay(random.nextLong(5000, 8000));
+            
+            if (!Backpack.isFull()) {
+                println("Preset loaded successfully. Backpack is not full.");
+                botState = BotState.NAVIGATE_TO_SHOP;
+            } else {
+                println("Failed to load preset or backpack is still full.");
             }
-            Execution.delay(random.nextLong(100, 200));
-        }
-        println("Failed to reach the bank.");
-        Execution.delay(random.nextLong(1500, 3000));
-    }
-
-    private void interactWithBartender(Npc bartender) {
-        println("Bartender is near. Interacting with Bartender.");
-        bartender.interact("Talk-to");
-        stateStartTime = System.currentTimeMillis();  // Reset the state start time
-        long timeout = TIMEOUT_DURATION;
-        while (System.currentTimeMillis() - stateStartTime < timeout && !Dialog.isOpen()) {
-            Execution.delay(100);
-        }
-        if (Dialog.isOpen()) {
-            handleBartenderDialog();
+            
+            stateStartTime = System.currentTimeMillis();
         } else {
-            println("Failed to open dialog with Bartender.");
+            println("Failed to reach the bank. Retrying.");
+            Execution.delay(random.nextLong(1500, 3000));
         }
     }
 
-    private void navigateToShop() {
-        println("Navigating to the shop.");
-        Movement.walkTo(shopCoordinate.getX(), shopCoordinate.getY(), false);
-        stateStartTime = System.currentTimeMillis();  // Reset the state start time
-        long timeout = TIMEOUT_DURATION;
-        LocalPlayer player = Client.getLocalPlayer();
-        while (System.currentTimeMillis() - stateStartTime < timeout) {
-            if (shopCoordinate.distanceTo(player.getCoordinate()) < 3) {
-                println("Reached the shop location.");
-                checkAndHandleDoors();
-                navigateToSecondLocation();
-                return;
+    private void interactWithNearestBartender() {
+        if (!Dialog.isOpen()) {
+            Npc bartender = NpcQuery.newQuery().name("Bartender").results().nearest();
+            if (bartender != null) {
+                println("Interacting with Bartender.");
+                bartender.interact("Talk-to");
+                stateStartTime = System.currentTimeMillis();
+
+                while (System.currentTimeMillis() - stateStartTime < TIMEOUT_DURATION && !Dialog.isOpen()) {
+                    Execution.delay(100);
+                }
+
+                if (Dialog.isOpen()) {
+                    botState = BotState.HANDLE_DIALOG;
+                } else {
+                    println("Failed to open dialog with Bartender. Reattempting interaction.");
+                    Execution.delay(random.nextLong(600, 1000));
+                }
+            } else {
+                println("No Bartender found nearby.");
+                Execution.delay(random.nextLong(600, 1000));
             }
-            Execution.delay(random.nextLong(100, 200));
-        }
-        println("Failed to reach the shop.");
-        Execution.delay(random.nextLong(1500, 3000));
-    }
-
-    private void navigateToSecondLocation() {
-        println("Navigating to the second location.");
-        Movement.walkTo(secondLocation.getX(), secondLocation.getY(), false);
-        stateStartTime = System.currentTimeMillis();  // Reset the state start time
-        long timeout = TIMEOUT_DURATION;
-        LocalPlayer player = Client.getLocalPlayer();
-        while (System.currentTimeMillis() - stateStartTime < timeout) {
-            if (secondLocation.distanceTo(player.getCoordinate()) < 3) {
-                println("Reached the second location.");
-                findAndInteractWithBartender();
-                return;
-            }
-            Execution.delay(random.nextLong(100, 200));
-        }
-        println("Failed to reach the second location.");
-        Execution.delay(random.nextLong(1500, 3000));
-    }
-
-    private void findAndInteractWithBartender() {
-        Npc bartender = NpcQuery.newQuery().name("Bartender").results().nearest();
-        if (bartender != null) {
-            interactWithBartender(bartender);
         } else {
-            println("Bartender not found.");
+            botState = BotState.HANDLE_DIALOG;
         }
     }
+
 
     private void checkAndHandleDoors() {
-        SceneObjectQuery query = SceneObjectQuery.newQuery()
+        SceneObject door = SceneObjectQuery.newQuery()
             .name("Door")
-            .option("Open", "Close");
-
-        SceneObject door = query.results().nearest();
+            .option("Open", "Close")
+            .results()
+            .nearest();
 
         if (door != null) {
             if (door.getOptions().contains("Open")) {
-                println("Closed door found, opening it.");
+                println("Opening closed door.");
                 door.interact("Open");
                 Execution.delay(random.nextLong(1000, 2000));
             } else if (door.getOptions().contains("Close")) {
                 println("Door is already open.");
-            } else {
-                println("Door found but neither open nor close action available.");
             }
         } else {
             println("No door found.");
@@ -229,56 +267,100 @@ public class SkeletonScript extends LoopingScript {
 
     private void handleBartenderDialog() {
         while (Dialog.isOpen()) {
+            println("Current Dialog State: " + dialogState); // Print the current dialog state for tracking
             switch (dialogState) {
                 case START:
+                    println("Dialog State: START");
                     if (Interfaces.isOpen(1184)) {
-                        println("Handling initial dialog interface (1184).");
-                        KeyboardInput.pressKey(KeyEvent.VK_SPACE);
-                        Execution.delay(random.nextInt(1000, 1200));
-                        dialogState = DialogState.FIRST_SPACE_PRESS;
+                        pressKeyAndAdvance(KeyEvent.VK_SPACE, DialogState.FIRST_SPACE_PRESS);
                     }
                     break;
                 case FIRST_SPACE_PRESS:
+                    println("Dialog State: FIRST_SPACE_PRESS");
                     if (Interfaces.isOpen(1188)) {
-                        println("Handling choice interface (1188).");
-                        KeyboardInput.pressKey(KeyEvent.VK_1);
-                        Execution.delay(random.nextInt(1000, 1200));
-                        dialogState = DialogState.FIRST_CHOICE;
+                        pressKeyAndAdvance(KeyEvent.VK_1, DialogState.FIRST_CHOICE);
                     }
                     break;
                 case FIRST_CHOICE:
+                    println("Dialog State: FIRST_CHOICE");
                     if (Interfaces.isOpen(1191)) {
-                        println("Handling second dialog interface (1191).");
-                        KeyboardInput.pressKey(KeyEvent.VK_SPACE);
-                        Execution.delay(random.nextInt(1000, 1200));
-                        dialogState = DialogState.SECOND_SPACE_PRESS;
+                        pressKeyAndAdvance(KeyEvent.VK_SPACE, DialogState.SECOND_SPACE_PRESS);
                     }
                     break;
                 case SECOND_SPACE_PRESS:
+                    println("Dialog State: SECOND_SPACE_PRESS");
                     if (Interfaces.isOpen(1184)) {
-                        println("Handling final dialog interface (1184).");
-                        KeyboardInput.pressKey(KeyEvent.VK_SPACE);
-                        Execution.delay(random.nextInt(1000, 1200));
-                        dialogState = DialogState.FINAL_SPACE_PRESS;
+                        pressKeyAndAdvance(KeyEvent.VK_SPACE, DialogState.FINAL_SPACE_PRESS);
                     }
                     break;
                 case FINAL_SPACE_PRESS:
+                    println("Dialog State: FINAL_SPACE_PRESS");
                     if (Interfaces.isOpen(1191)) {
-                        println("Completing dialog interaction.");
-                        KeyboardInput.pressKey(KeyEvent.VK_SPACE);
-                        Execution.delay(random.nextInt(1000, 1200));
-                        dialogState = DialogState.COMPLETE;
+                        pressKeyAndAdvance(KeyEvent.VK_SPACE, DialogState.COMPLETE);
+                        println("Dialog interaction complete.");
+                        beersBought++;
+                        println("Beers bought: " + beersBought);
+                        dialogState = DialogState.START;
+                        if (!Backpack.isFull()) {
+                            botState = BotState.INTERACT_WITH_BARTENDER;
+                        } else {
+                            botState = BotState.NAVIGATE_TO_BANK;
+                        }
+                        stateStartTime = System.currentTimeMillis();
+                        return;
                     }
                     break;
-                case COMPLETE:
-                    println("Dialog interaction complete.");
-                    dialogState = DialogState.START;
-                    return;
             }
+            Execution.delay(100);
         }
-        println("Dialog not open.");
+        println("Dialog not open currently. Reattempting interaction.");
         dialogState = DialogState.START;
+        botState = BotState.BARTENDER_NEARBY;
+        stateStartTime = System.currentTimeMillis();
     }
+
+    
+    private void interactWithBankBooth() {
+        SceneObject bankBooth = SceneObjectQuery.newQuery().name("Bank booth").results().nearest();
+        LocalPlayer player = Client.getLocalPlayer();
+
+        if (bankBooth != null && bankBooth.getCoordinate().distanceTo(player.getCoordinate()) < 10) {
+            println("Interacting with bank booth.");
+            Bank.loadLastPreset();
+            Execution.delay(random.nextLong(3000,5000));
+            if (!Backpack.isFull()) {
+                println("Preset loaded successfully. Backpack is not full.");
+                botState = BotState.NAVIGATE_TO_SHOP;
+            } else {
+                println("Failed to load preset or backpack is still full.");
+            }
+            navigating = false;
+            stateStartTime = System.currentTimeMillis();
+        } else {
+            println("Bank booth not found or not within reach.");
+            navigateTo(bankLocation, BotState.NAVIGATE_TO_BANK);
+        }
+    }
+
+
+
+    private void pressSpaceAndAdvance(DialogState nextState) {
+        KeyboardInput.pressKey(KeyEvent.VK_SPACE);
+        Execution.delay(random.nextInt(700, 1000));
+        dialogState = nextState;
+    }
+
+    private void pressKeyAndAdvance(int key, DialogState nextState) {
+        KeyboardInput.pressKey(key);
+        Execution.delay(random.nextInt(700, 1000));
+        dialogState = nextState;
+    }
+
+    @Override
+    public SkeletonScriptGraphicsContext getGraphicsContext() {
+        return sgc;
+    }
+
     public BotState getBotState() {
         return botState;
     }
@@ -293,5 +375,9 @@ public class SkeletonScript extends LoopingScript {
 
     public void setSomeBool(boolean someBool) {
         this.someBool = someBool;
+    }
+    
+    public int getBeersBought() {
+        return beersBought;
     }
 }
