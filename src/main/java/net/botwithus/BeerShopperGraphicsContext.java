@@ -5,11 +5,11 @@ import net.botwithus.rs3.imgui.ImGuiWindowFlag;
 import net.botwithus.rs3.script.ScriptConsole;
 import net.botwithus.rs3.script.ScriptGraphicsContext;
 
-public class SkeletonScriptGraphicsContext extends ScriptGraphicsContext {
+public class BeerShopperGraphicsContext extends ScriptGraphicsContext {
 
-    private SkeletonScript script;
+    private BeerShopper script;
 
-    public SkeletonScriptGraphicsContext(ScriptConsole scriptConsole, SkeletonScript script) {
+    public BeerShopperGraphicsContext(ScriptConsole scriptConsole, BeerShopper script) {
         super(scriptConsole);
         this.script = script;
     }
@@ -23,6 +23,14 @@ public class SkeletonScriptGraphicsContext extends ScriptGraphicsContext {
                     ImGui.Text("It will use load last preset, make sure empty inventory is loaded last.");
                     ImGui.Text("Have enough coins.");
                     ImGui.Text("Beers bought: " + script.getBeersBought());
+
+                    long elapsedTime = script.getElapsedTime();
+                    double beersPerHour = script.getBeersPerHour();
+
+                    ImGui.Text(String.format("Script running time: %02d:%02d:%02d",
+                        elapsedTime / 3600000, (elapsedTime / 60000) % 60, (elapsedTime / 1000) % 60));
+                    ImGui.Text(String.format("Beers per hour: %.2f", beersPerHour));
+                    
                     ImGui.EndTabItem();
                 }
                 ImGui.EndTabBar();
