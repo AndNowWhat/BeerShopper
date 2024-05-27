@@ -37,7 +37,7 @@ public class BeerShopper extends LoopingScript {
     private BeerShopperGraphicsContext sgc;
     private Random random = new Random();
     private Coordinate shopCoordinate = new Coordinate(3215, 3395, 0);
-    private Coordinate bankLocation = new Coordinate(3186, 3433, 0);
+    private Coordinate bankLocation = new Coordinate(3252, 3421, 0);
     private DialogState dialogState = DialogState.START;
     enum BotState {
         NOT_LOGGED_IN,

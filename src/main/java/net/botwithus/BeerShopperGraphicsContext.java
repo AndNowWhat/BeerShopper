@@ -19,7 +19,7 @@ public class BeerShopperGraphicsContext extends ScriptGraphicsContext {
         if (ImGui.Begin("Beer shopper", ImGuiWindowFlag.None.getValue())) {
             if (ImGui.BeginTabBar("My bar", ImGuiWindowFlag.None.getValue())) {
                 if (ImGui.BeginTabItem("Settings", ImGuiWindowFlag.None.getValue())) {
-                    ImGui.Text("Start in Varrock west bank or the Inn");
+                    ImGui.Text("Start in Varrock East bank or the Inn");
                     ImGui.Text("It will use load last preset, make sure empty inventory is loaded last.");
                     ImGui.Text("Have enough coins.");
                     ImGui.Text("Beers bought: " + script.getBeersBought());
